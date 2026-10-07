@@ -57,3 +57,33 @@ One session attempted a download-and-execute chain: it fetched a file from a rem
 ### 5. A second behavior: SMTP relay probing
 
 437 port-forwarding requests came from 313 distinct IPs, and every one asked for the same destination: 77[.]88[.]21[.]158 on port 25 (SMTP). Most senders made only a handful of requests and never ran commands. This is consistent with scanners testing for open proxies that could be used to relay spam (MITRE T1090, Proxy). The intent is inferred from the port, since Cowrie logs the request but does not carry it out.
+
+
+## Limitations
+
+- **Connections are not attacks.** Cowrie accepts almost every login by design (about 98% of connections), so "success" means the honeypot let the client in, not that anything was breached.
+- **Event counts are not attack counts.** The logs hold about 130,000 events, but each connection produces roughly 8 events (connect, version, key exchange, login, commands, close). The 16,580 connections figure is the meaningful one.
+- **Geolocation is approximate.** Country data shows where an IP address is registered, not where the person is. Many US addresses are cloud-hosted servers.
+- **Intent is inferred.** Calling the port 25 traffic spam-relay probing is an interpretation based on the destination port, since Cowrie logs requests without carrying them out.
+- **One bot skews the numbers.** A single IP made about 90% of connections, so raw totals overstate overall activity. This is why the dashboard also counts unique IPs.
+- **Short observation window.** 17 days from one honeypot in one cloud region is a small sample and should not be generalized.
+- **Early data issue.** An initial ingest double-counted events because a rotated log file was indexed twice. I fixed the Splunk input, cleaned the index, and re-ingested, so all figures here come from the corrected data.
+
+## What I Learned
+
+- Raw counts mislead. Splitting traffic by source IP and counting unique IPs changed the story from "heavy attack" to "one noisy bot over a steady background."
+- Filtering matters. Most logged commands were a connectivity probe, and removing it exposed the real reconnaissance and dropper behavior.
+- Log pipelines break in practical ways. I resolved JSON parsing problems with `props.conf`, a duplicate-ingest problem by cleaning the index, and a Splunk crash caused by running out of memory on a 1 GB instance (fixed by moving to a larger one).
+- Safe handling of hostile data: I never contacted attacker infrastructure, and I defanged addresses so they cannot be clicked.
+
+## How to Reproduce
+
+1. Launch two Ubuntu EC2 instances (one for Cowrie, one for Splunk Enterprise) in the same VPC.
+2. Install Cowrie on the honeypot under a dedicated non-root user and listen on port 2222. Keep real SSH on port 22 restricted to your own IP.
+3. Open port 2222 to the internet on the honeypot's security group only.
+4. Install Splunk Enterprise on the second instance. Allow port 9997 only from the honeypot's private IP, and port 8000 only from your own IP.
+5. Install the Splunk Universal Forwarder on the honeypot and monitor the Cowrie JSON log directory.
+6. Add a `props.conf` stanza for the `cowrie.json` sourcetype so each line is parsed as one JSON event.
+7. Build searches on `eventid` values such as `cowrie.session.connect`, `cowrie.login.success`, `cowrie.command.input`, and `cowrie.direct-tcpip.request`.
+
+- **Safe handling:** The honeypot held no real data, nothing captured was executed, and attacker infrastructure was never contacted.
